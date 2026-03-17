@@ -73,11 +73,21 @@ function Eclipse:CreateGui()
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     
     -- Protection
-    if syn and syn.protect_gui then
-        syn.protect_gui(ScreenGui)
-    elseif gethui then
-        ScreenGui.Parent = gethui()
-    else
+    pcall(function()
+        if syn and syn.protect_gui then
+            syn.protect_gui(ScreenGui)
+            ScreenGui.Parent = game:GetService("CoreGui")
+        elseif gethui then
+            ScreenGui.Parent = gethui()
+        elseif game:GetService("RunService"):IsStudio() == false then
+            ScreenGui.Parent = game:GetService("CoreGui")
+        else
+            ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        end
+    end)
+    
+    -- Fallback если что-то пошло не так
+    if not ScreenGui.Parent then
         ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     end
     
