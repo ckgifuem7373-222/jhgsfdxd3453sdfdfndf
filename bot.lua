@@ -52,14 +52,17 @@ Eclipse.Knowledge = {
     functions = {}, -- Изученные функции
     remotes = {}, -- Изученные RemoteEvents
     contexts = {}, -- Контекстные связи
-    feedback = {} -- Обратная связь от пользователя
+    feedback = {}, -- Обратная связь от пользователя
+    customAnswers = {} -- Пользовательские ответы на вопросы
 }
 
 Eclipse.CurrentContext = {
     game = nil,
     lastTopic = nil,
     conversationDepth = 0,
-    analyzedObjects = {}
+    analyzedObjects = {},
+    waitingForAnswer = false, -- Ожидает ответа от пользователя
+    lastQuestion = nil -- Последний заданный вопрос
 }
 
 -- Persistent Storage
@@ -520,13 +523,19 @@ end
 function Eclipse:GenerateIntelligentResponse(message)
     local lowerMessage = message:lower()
     
-    -- Проверяем изученные паттерны
+    -- ПРИОРИТЕТ 1: Проверяем пользовательские ответы
+    local customAnswer = self:FindCustomAnswer(message)
+    if customAnswer then
+        return customAnswer
+    end
+    
+    -- ПРИОРИТЕТ 2: Проверяем изученные паттерны
     local learnedResponse = self:CheckLearnedPatterns(lowerMessage)
     if learnedResponse then
         return learnedResponse
     end
     
-    -- Анализируем контекст разговора
+    -- ПРИОРИТЕТ 3: Анализируем контекст разговора
     local contextResponse = self:AnalyzeContext(lowerMessage)
     if contextResponse then
         return contextResponse
@@ -556,7 +565,18 @@ function Eclipse:GenerateIntelligentResponse(message)
         return "Я проанализировал текущую игру. Могу помочь понять структуру, найти важные скрипты, изучить RemoteEvents и механики. Что именно тебя интересует?"
     
     elseif lowerMessage:match("учись") or lowerMessage:match("learn") or lowerMessage:match("запомни") then
-        return "Отлично! Расскажи мне что-то новое, и я запомню. Например: 'Запомни: в этой игре для прыжка используется RemoteEvent JumpRequest'"
+        return [[Отлично! Есть несколько способов научить меня:
+
+1. Вопрос-ответ:
+   Запомни: Что такое античит? Система защиты от читеров
+
+2. Определение:
+   Запомни что RemoteEvent это объект для связи клиент-сервер
+
+3. Просто расскажи:
+   Запомни: В этой игре для прыжка используется функция Jump()
+
+Я запомню все и буду использовать при ответах!]]
     
     elseif lowerMessage:match("что.*знаешь") or lowerMessage:match("what.*know") then
         return self:ShowKnowledge()
@@ -582,7 +602,7 @@ function Eclipse:GenerateIntelligentResponse(message)
             return "Интересно! Я запомнил это. " .. extractedKnowledge
         end
         
-        return "Интересный вопрос! Я учусь понимать игры. Расскажи мне больше, и я запомню. Попробуй спросить о RemoteEvents, скриптах или структуре игры."
+        return "Интересный вопрос! Я пока не знаю ответа. Научи меня:\n\nЗапомни: " .. message .. " [твой ответ]\n\nИ я запомню навсегда!"
     end
 end
 
@@ -789,6 +809,20 @@ end
 function Eclipse:ExtractKnowledge(message)
     local lowerMessage = message:lower()
     
+    -- Паттерн: "Запомни: вопрос? ответ"
+    local question, answer = message:match("[Зз]апомни:%s*(.-)%?%s*(.+)")
+    if question and answer then
+        self:LearnQuestionAnswer(question, answer)
+        return "Запомнил! Теперь на вопрос '" .. question .. "?' я буду отвечать: " .. answer
+    end
+    
+    -- Паттерн: "Запомни что [тема] это [ответ]"
+    local topic, definition = message:match("[Зз]апомни%s+что%s+(.-)%s+это%s+(.+)")
+    if topic and definition then
+        self:LearnQuestionAnswer("Что такое " .. topic, definition)
+        return "Запомнил! Теперь я знаю что такое " .. topic
+    end
+    
     -- Паттерны для извлечения знаний
     if lowerMessage:match("это") or lowerMessage:match("называется") or lowerMessage:match("используется") then
         -- Пользователь что-то объясняет
@@ -804,6 +838,93 @@ function Eclipse:ExtractKnowledge(message)
     end
     
     return nil
+end
+
+function Eclipse:LearnQuestionAnswer(question, answer)
+    local normalizedQuestion = question:lower():gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1")
+    
+    if not self.Knowledge.customAnswers[normalizedQuestion] then
+        self.Knowledge.customAnswers[normalizedQuestion] = {
+            question = question,
+            answers = {},
+            count = 0,
+            lastUpdated = os.time(),
+            priority = 10 -- Максимальный приоритет
+        }
+    end
+    
+    table.insert(self.Knowledge.customAnswers[normalizedQuestion].answers, {
+        text = answer,
+        timestamp = os.time()
+    })
+    
+    self.Knowledge.customAnswers[normalizedQuestion].count = self.Knowledge.customAnswers[normalizedQuestion].count + 1
+    self.Knowledge.customAnswers[normalizedQuestion].lastUpdated = os.time()
+    
+    -- Сохраняем
+    self:SaveKnowledge()
+end
+
+function Eclipse:FindCustomAnswer(question)
+    local normalizedQuestion = question:lower():gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1")
+    
+    -- Точное совпадение
+    if self.Knowledge.customAnswers[normalizedQuestion] then
+        local data = self.Knowledge.customAnswers[normalizedQuestion]
+        local latestAnswer = data.answers[#data.answers].text
+        return "✅ [Из моих знаний] " .. latestAnswer
+    end
+    
+    -- Частичное совпадение (ищем похожие вопросы)
+    local bestMatch = nil
+    local bestScore = 0
+    
+    for savedQuestion, data in pairs(self.Knowledge.customAnswers) do
+        local score = self:CalculateSimilarity(normalizedQuestion, savedQuestion)
+        if score > bestScore and score > 0.6 then -- 60% совпадение
+            bestScore = score
+            bestMatch = data
+        end
+    end
+    
+    if bestMatch then
+        local latestAnswer = bestMatch.answers[#bestMatch.answers].text
+        return "🤔 [Похожий вопрос, уверен на " .. math.floor(bestScore * 100) .. "%] " .. latestAnswer
+    end
+    
+    return nil
+end
+
+function Eclipse:CalculateSimilarity(str1, str2)
+    -- Простой алгоритм сравнения строк
+    local words1 = {}
+    local words2 = {}
+    
+    for word in str1:gmatch("%w+") do
+        words1[word] = true
+    end
+    
+    for word in str2:gmatch("%w+") do
+        words2[word] = true
+    end
+    
+    local common = 0
+    local total = 0
+    
+    for word in pairs(words1) do
+        total = total + 1
+        if words2[word] then
+            common = common + 1
+        end
+    end
+    
+    for word in pairs(words2) do
+        if not words1[word] then
+            total = total + 1
+        end
+    end
+    
+    return total > 0 and (common / total) or 0
 end
 
 function Eclipse:AutoAnalyzeGame()
@@ -830,6 +951,15 @@ end
 function Eclipse:ShowKnowledge()
     local knowledge = "📚 Моя база знаний:\n\n"
     
+    -- Пользовательские ответы
+    local customCount = 0
+    for _ in pairs(self.Knowledge.customAnswers) do
+        customCount = customCount + 1
+    end
+    if customCount > 0 then
+        knowledge = knowledge .. "💡 Выученных ответов: " .. customCount .. "\n"
+    end
+    
     -- Изученные паттерны
     local patternCount = 0
     for _ in pairs(self.Knowledge.patterns) do
@@ -839,7 +969,13 @@ function Eclipse:ShowKnowledge()
     
     -- Данные об игре
     if self.Knowledge.remotes then
-        knowledge = knowledge .. "• RemoteEvents найдено: " .. #self.Knowledge.remotes .. "\n"
+        local remoteCount = 0
+        for _ in pairs(self.Knowledge.remotes) do
+            remoteCount = remoteCount + 1
+        end
+        if remoteCount > 0 then
+            knowledge = knowledge .. "• RemoteEvents найдено: " .. remoteCount .. "\n"
+        end
     end
     
     -- Концепции
@@ -853,7 +989,21 @@ function Eclipse:ShowKnowledge()
     knowledge = knowledge .. "• Глубина разговора: " .. self.CurrentContext.conversationDepth .. "\n"
     
     if self.CurrentContext.lastTopic then
-        knowledge = knowledge .. "• Текущая тема: " .. self.CurrentContext.lastTopic
+        knowledge = knowledge .. "• Текущая тема: " .. self.CurrentContext.lastTopic .. "\n"
+    end
+    
+    -- Показываем несколько примеров выученных ответов
+    if customCount > 0 then
+        knowledge = knowledge .. "\n📖 Примеры выученного:\n"
+        local count = 0
+        for question, data in pairs(self.Knowledge.customAnswers) do
+            if count >= 3 then break end
+            knowledge = knowledge .. "• " .. data.question .. "\n"
+            count = count + 1
+        end
+        if customCount > 3 then
+            knowledge = knowledge .. "... и еще " .. (customCount - 3) .. " ответов"
+        end
     end
     
     return knowledge
@@ -1197,6 +1347,39 @@ Eclipse.Commands = {
         self:AddMessage("Eclipse", self:ShowKnowledge(), false)
     end,
     
+    ["/answers"] = function(self)
+        local customCount = 0
+        for _ in pairs(self.Knowledge.customAnswers) do
+            customCount = customCount + 1
+        end
+        
+        if customCount == 0 then
+            self:AddMessage("Eclipse", "📖 Я еще не выучил ни одного ответа. Научи меня!\n\nПример:\nЗапомни: Что такое античит? Система защиты от читеров", false)
+            return
+        end
+        
+        local response = "📖 Выученные ответы (" .. customCount .. "):\n\n"
+        local count = 0
+        
+        for question, data in pairs(self.Knowledge.customAnswers) do
+            count = count + 1
+            local latestAnswer = data.answers[#data.answers].text
+            response = response .. count .. ". " .. data.question .. "?\n"
+            response = response .. "   → " .. latestAnswer:sub(1, 50)
+            if #latestAnswer > 50 then
+                response = response .. "..."
+            end
+            response = response .. "\n\n"
+            
+            if count >= 10 then
+                response = response .. "... и еще " .. (customCount - 10) .. " ответов"
+                break
+            end
+        end
+        
+        self:AddMessage("Eclipse", response, false)
+    end,
+    
     ["/teach"] = function(self)
         self:AddMessage("Eclipse", [[📖 Режим обучения активирован!
 
@@ -1215,13 +1398,16 @@ Eclipse.Commands = {
             functions = {},
             remotes = {},
             contexts = {},
-            feedback = {}
+            feedback = {},
+            customAnswers = {}
         }
         self.CurrentContext = {
             game = nil,
             lastTopic = nil,
             conversationDepth = 0,
-            analyzedObjects = {}
+            analyzedObjects = {},
+            waitingForAnswer = false,
+            lastQuestion = nil
         }
         
         -- Удаляем сохранение
@@ -1295,6 +1481,7 @@ Eclipse.Commands = {
 /remotes - Поиск RemoteEvents
 /structure - Структура игры
 /learn - Показать базу знаний
+/answers - Список выученных ответов
 /teach - Режим обучения
 /stats - Статистика памяти
 /save - Сохранить знания
