@@ -1,10 +1,12 @@
 local HttpService = game:GetService("HttpService")
-local FileName = "bot_memory.json"
+local TextChatService = game:GetService("TextChatService")
+local FileName = "bot_brain_v2.json"
 
 -- База знаний
-local Memory = { ["привет"] = {"Привет! Я твой ИИ."} }
+local Memory = { ["привет"] = {"Привет! Я твой ИИ-ученик."}, ["кто ты"] = {"Я самообучающийся скрипт для Xeno!"} }
+local AutoChat = false -- По умолчанию выключено
 
--- Функции сохранения/загрузки (специфичные для Xeno/Exploits)
+-- Функции работы с файлами
 local function saveMemory()
     writefile(FileName, HttpService:JSONEncode(Memory))
 end
@@ -18,95 +20,132 @@ end
 
 loadMemory()
 
+-- СЧЕТЧИК ЗНАНИЙ
+local function getMemorySize()
+    local count = 0
+    for _ in pairs(Memory) do count = count + 1 end
+    return count
+end
+
 -- СОЗДАНИЕ GUI
 local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
-ScreenGui.Name = "Xeno_AI_Chat"
-
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 300, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
-MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Size = UDim2.new(0, 320, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -225)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 MainFrame.Active = true
-MainFrame.Draggable = true -- Можно двигать мышкой
+MainFrame.Draggable = true
+
+-- Скругление углов
+local Corner = Instance.new("UICorner", MainFrame)
 
 local Title = Instance.new("TextLabel", MainFrame)
-Title.Size = UDim2.new(1, 0, 0, 30)
-Title.Text = "AI Chat Engine (Xeno Edition)"
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Text = "🤖 AI BRAIN [v2.0]"
 Title.TextColor3 = Color3.new(1, 1, 1)
-Title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+Title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+Instance.new("UICorner", Title)
+
+local StatsLabel = Instance.new("TextLabel", MainFrame)
+StatsLabel.Size = UDim2.new(1, 0, 0, 20)
+StatsLabel.Position = UDim2.new(0, 0, 0, 40)
+StatsLabel.Text = "Выучено фраз: " .. getMemorySize()
+StatsLabel.TextColor3 = Color3.fromRGB(0, 255, 150)
+StatsLabel.BackgroundTransparency = 1
 
 local ChatLog = Instance.new("ScrollingFrame", MainFrame)
-ChatLog.Size = UDim2.new(0.9, 0, 0.6, 0)
-ChatLog.Position = UDim2.new(0.05, 0, 0.1, 0)
-ChatLog.CanvasSize = UDim2.new(0, 0, 5, 0)
-ChatLog.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-
-local UIList = Instance.new("UIListLayout", ChatLog)
-UIList.SortOrder = Enum.SortOrder.LayoutOrder
+ChatLog.Size = UDim2.new(0.9, 0, 0.45, 0)
+ChatLog.Position = UDim2.new(0.05, 0, 0.15, 0)
+ChatLog.CanvasSize = UDim2.new(0, 0, 10, 0)
+ChatLog.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+Instance.new("UIListLayout", ChatLog).SortOrder = Enum.SortOrder.LayoutOrder
 
 local InputBox = Instance.new("TextBox", MainFrame)
-InputBox.Size = UDim2.new(0.9, 0, 0, 30)
-InputBox.Position = UDim2.new(0.05, 0, 0.75, 0)
-InputBox.PlaceholderText = "Напиши что-нибудь..."
-InputBox.Text = ""
-InputBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+InputBox.Size = UDim2.new(0.9, 0, 0, 35)
+InputBox.Position = UDim2.new(0.05, 0, 0.65, 0)
+InputBox.PlaceholderText = "Напиши что-то для обучения..."
+InputBox.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 InputBox.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", InputBox)
+
+-- КНОПКА ГЛОБАЛЬНОГО ЧАТА
+local ToggleBtn = Instance.new("TextButton", MainFrame)
+ToggleBtn.Size = UDim2.new(0.9, 0, 0, 30)
+ToggleBtn.Position = UDim2.new(0.05, 0, 0.75, 0)
+ToggleBtn.Text = "Глобальный авто-ответ: ВЫКЛ"
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+ToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", ToggleBtn)
 
 local ClearBtn = Instance.new("TextButton", MainFrame)
 ClearBtn.Size = UDim2.new(0.9, 0, 0, 30)
 ClearBtn.Position = UDim2.new(0.05, 0, 0.85, 0)
-ClearBtn.Text = "ОЧИСТИТЬ ПАМЯТЬ"
-ClearBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+ClearBtn.Text = "СБРОСИТЬ ВСЕ ЗНАНИЯ"
+ClearBtn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
 ClearBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", ClearBtn)
 
--- Логика чата
-local lastInput = ""
-
-local function addMessage(text, color)
-    local msg = Instance.new("TextLabel", ChatLog)
-    msg.Size = UDim2.new(1, 0, 0, 25)
-    msg.BackgroundTransparency = 1
-    msg.Text = text
-    msg.TextColor3 = color or Color3.new(1, 1, 1)
-    msg.TextWrapped = true
+-- ЛОГИКА
+local function addLog(txt, col)
+    local l = Instance.new("TextLabel", ChatLog)
+    l.Size = UDim2.new(1, 0, 0, 20)
+    l.Text = txt
+    l.TextColor3 = col or Color3.new(1,1,1)
+    l.BackgroundTransparency = 1
+    ChatLog.CanvasPosition = Vector2.new(0, 9999)
 end
 
-InputBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed and InputBox.Text ~= "" then
-        local userText = InputBox.Text:lower()
-        addMessage("Вы: " .. userText, Color3.new(0.7, 0.7, 1))
-        
-        -- Поиск ответа
-        if Memory[userText] then
-            local resp = Memory[userText][math.random(1, #Memory[userText])]
-            task.wait(0.5)
-            addMessage("ИИ: " .. resp, Color3.new(0.7, 1, 0.7))
+local lastMsg = ""
+
+local function processBrain(msg, isGlobal)
+    local input = msg:lower()
+    if Memory[input] then
+        local r = Memory[input][math.random(1, #Memory[input])]
+        if isGlobal then
+            game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(r, "All")
         else
-            -- Если не знает, запоминает контекст для обучения
-            if lastInput ~= "" then
-                if not Memory[lastInput] then Memory[lastInput] = {} end
-                table.insert(Memory[lastInput], userText)
-                saveMemory()
-                addMessage("[Выучено новое соответствие]", Color3.new(1, 1, 0))
-            end
-            addMessage("ИИ: Я пока не знаю, что ответить.", Color3.new(1, 0.5, 0.5))
+            addLog("ИИ: " .. r, Color3.new(0.5, 1, 0.5))
         end
-        
-        lastInput = userText
+    else
+        if lastMsg ~= "" and lastMsg ~= input then
+            if not Memory[lastMsg] then Memory[lastMsg] = {} end
+            table.insert(Memory[lastMsg], msg)
+            saveMemory()
+            StatsLabel.Text = "Выучено фраз: " .. getMemorySize()
+            addLog("[Новое знание получено]", Color3.new(1, 1, 0))
+        end
+        if not isGlobal then addLog("ИИ: (запоминаю...)", Color3.new(1, 0.4, 0.4)) end
+    end
+    lastMsg = input
+end
+
+-- Обработка ввода в GUI
+InputBox.FocusLost:Connect(function(enter)
+    if enter and InputBox.Text ~= "" then
+        addLog("Вы: " .. InputBox.Text, Color3.new(0.6, 0.6, 1))
+        processBrain(InputBox.Text, false)
         InputBox.Text = ""
     end
 end)
 
--- Команда очистки
-ClearBtn.MouseButton1Click:Connect(function()
-    Memory = { ["привет"] = {"Привет! Я твой ИИ."} }
-    saveMemory()
-    addMessage("!!! ПАМЯТЬ ОЧИЩЕНА !!!", Color3.fromRGB(255, 0, 0))
+-- Переключатель авто-чата
+ToggleBtn.MouseButton1Click:Connect(function()
+    AutoChat = not AutoChat
+    ToggleBtn.Text = "Глобальный авто-ответ: " .. (AutoChat and "ВКЛ" or "ВЫКЛ")
+    ToggleBtn.BackgroundColor3 = AutoChat and Color3.fromRGB(40, 100, 40) or Color3.fromRGB(60, 60, 70)
 end)
 
--- Клавиша скрытия меню (Insert)
-game:GetService("UserInputService").InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.Insert then
-        MainFrame.Visible = not MainFrame.Visible
+-- Слушатель глобального чата
+game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.OnMessageDoneFiltering.OnClientEvent:Connect(function(data)
+    if AutoChat and data.FromSpeaker ~= game.Players.LocalPlayer.Name then
+        processBrain(data.Message, true)
     end
+end)
+
+-- Очистка
+ClearBtn.MouseButton1Click:Connect(function()
+    Memory = {}
+    saveMemory()
+    StatsLabel.Text = "Выучено фраз: 0"
+    addLog("!!! ПАМЯТЬ СТЕРТА !!!", Color3.new(1,0,0))
 end)
