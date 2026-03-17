@@ -1,98 +1,102 @@
 local HttpService = game:GetService("HttpService")
-local FileName = "ultra_bot_brain.json"
+local UserInputService = game:GetService("UserInputService")
+local FileName = "ai_master_brain.json"
 
--- Конфигурация
-local Memory = {["кто ты"] = {"Я автономный ИИ v5.0 с доступом к сети."}}
-local Blacklist = {"дурак", "скам", "чит"}
+-- ПАРАМЕТРЫ ИИ
+local Memory = {["привет"] = {"Привет! Я стал еще умнее и теперь могу менять размер окна."}}
+local ChatHistory = {} -- Контекстная память
+local Mood = "Нейтральный"
 local AutoChat = false
-local WebSearchEnabled = true
 
--- Функция загрузки/сохранения
+-- Загрузка данных
 local function save() writefile(FileName, HttpService:JSONEncode(Memory)) end
 if isfile(FileName) then 
     local s, d = pcall(function() return HttpService:JSONDecode(readfile(FileName)) end)
     if s then Memory = d end
 end
 
--- ВЕБ-ПОИСК (Используем DuckDuckGo API через Proxy для Roblox)
+-- ИСПРАВЛЕННАЯ ФУНКЦИЯ WEB-ПОИСКА
 local function askWeb(query)
-    local url = "https://api.duckduckgo.com" .. HttpService:UrlEncode(query) .. "&format=json&no_html=1&skip_disambig=1"
-    local success, response = pcall(function()
-        return game:HttpGet(url)
-    end)
+    if not query or query == "" then return nil end
+    local url = "https://api.duckduckgo.com" .. HttpService:UrlEncode(query) .. "&format=json&no_html=1"
     
-    if success then
+    local success, response = pcall(function() return game:HttpGet(url) end)
+    
+    if success and response and response ~= "" then
         local data = HttpService:JSONDecode(response)
-        if data.AbstractText and data.AbstractText ~= "" then
+        if data and data.AbstractText and data.AbstractText ~= "" then
             return data.AbstractText
         end
     end
     return nil
 end
 
--- GUI СТРУКТУРА
+-- СОЗДАНИЕ GUI
 local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
 local Main = Instance.new("Frame", ScreenGui)
-Main.Size = UDim2.new(0, 350, 0, 500)
-Main.Position = UDim2.new(0.5, -175, 0.5, -250)
-Main.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
-Instance.new("UICorner", Main)
+Main.Size = UDim2.new(0, 350, 0, 450)
+Main.Position = UDim2.new(0.5, -175, 0.5, -225)
+Main.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+Main.Active = true
+Main.Draggable = true -- Передвижение за любую часть фона
+
+local Corner = Instance.new("UICorner", Main)
+
+-- Хендл для изменения размера
+local ResizeHandle = Instance.new("ImageButton", Main)
+ResizeHandle.Size = UDim2.new(0, 20, 0, 20)
+ResizeHandle.Position = UDim2.new(1, -20, 1, -20)
+ResizeHandle.BackgroundTransparency = 1
+ResizeHandle.Image = "rbxassetid://3854515233" -- Иконка уголка
 
 local Title = Instance.new("TextLabel", Main)
-Title.Size = UDim2.new(1, 0, 0, 45)
-Title.Text = "🌐 ULTRA AI ENGINE v5.0"
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Text = "🧠 NEURAL MASTER v6.0"
 Title.TextColor3 = Color3.new(1, 1, 1)
-Title.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+Title.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
 Instance.new("UICorner", Title)
 
-local Stats = Instance.new("TextLabel", Main)
-Stats.Size = UDim2.new(1, 0, 0, 30)
-Stats.Position = UDim2.new(0, 0, 0, 50)
-Stats.TextColor3 = Color3.fromRGB(0, 200, 255)
-Stats.BackgroundTransparency = 1
-Stats.Text = "Интеллект: Анализ данных..."
-
 local Log = Instance.new("ScrollingFrame", Main)
-Log.Size = UDim2.new(0.9, 0, 0.4, 0)
-Log.Position = UDim2.new(0.05, 0, 0.18, 0)
-Log.BackgroundColor3 = Color3.fromRGB(5, 5, 8)
+Log.Size = UDim2.new(0.9, 0, 0.5, 0)
+Log.Position = UDim2.new(0.05, 0, 0.12, 0)
+Log.BackgroundColor3 = Color3.fromRGB(5, 5, 10)
+Log.CanvasSize = UDim2.new(0,0,20,0)
 Instance.new("UIListLayout", Log)
 
 local Input = Instance.new("TextBox", Main)
-Input.Size = UDim2.new(0.9, 0, 0, 40)
-Input.Position = UDim2.new(0.05, 0, 0.6, 0)
+Input.Size = UDim2.new(0.9, 0, 0, 35)
+Input.Position = UDim2.new(0.05, 0, 0.65, 0)
 Input.PlaceholderText = "Спроси меня о чем угодно..."
-Input.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+Input.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 Input.TextColor3 = Color3.new(1,1,1)
 Instance.new("UICorner", Input)
 
-local WebToggle = Instance.new("TextButton", Main)
-WebToggle.Size = UDim2.new(0.9, 0, 0, 30)
-WebToggle.Position = UDim2.new(0.05, 0, 0.7, 0)
-WebToggle.Text = "Web-Search: ВКЛ"
-WebToggle.BackgroundColor3 = Color3.fromRGB(0, 80, 150)
-WebToggle.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", WebToggle)
+local Toggle = Instance.new("TextButton", Main)
+Toggle.Size = UDim2.new(0.9, 0, 0, 30)
+Toggle.Position = UDim2.new(0.05, 0, 0.75, 0)
+Toggle.Text = "Глобальный чат: ВЫКЛ"
+Toggle.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+Toggle.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", Toggle)
 
-local ChatToggle = Instance.new("TextButton", Main)
-ChatToggle.Size = UDim2.new(0.9, 0, 0, 30)
-ChatToggle.Position = UDim2.new(0.05, 0, 0.78, 0)
-ChatToggle.Text = "Глобальный чат: ВЫКЛ"
-ChatToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-ChatToggle.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", ChatToggle)
+-- ЛОГИКА ИЗМЕНЕНИЯ РАЗМЕРА
+local resizing = false
+ResizeHandle.MouseButton1Down:Connect(function() resizing = true end)
+UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then resizing = false end end)
 
--- ЛОГИКА ОБРАБОТКИ
-local lastInput = ""
+UserInputService.InputChanged:Connect(function(input)
+    if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local mousePos = UserInputService:GetMouseLocation()
+        local newSizeX = math.clamp(mousePos.X - Main.AbsolutePosition.X, 250, 800)
+        local newSizeY = math.clamp(mousePos.Y - Main.AbsolutePosition.Y, 300, 800)
+        Main.Size = UDim2.new(0, newSizeX, 0, newSizeY)
+    end
+end)
 
-local function updateIQ()
-    local count = 0 for _ in pairs(Memory) do count = count + 1 end
-    Stats.Text = "🧠 База: " .. count .. " | IQ: " .. (100 + count * 2)
-end
-
+-- УМНАЯ ЛОГИКА ОТВЕТОВ
 local function addLog(t, c)
     local l = Instance.new("TextLabel", Log)
-    l.Size = UDim2.new(1, 0, 0, 25)
+    l.Size = UDim2.new(1, 0, 0, 20)
     l.Text = " " .. t
     l.TextColor3 = c or Color3.new(1,1,1)
     l.BackgroundTransparency = 1
@@ -101,41 +105,37 @@ local function addLog(t, c)
 end
 
 local function process(msg, global)
-    msg = msg:lower()
-    for _, b in pairs(Blacklist) do if msg:find(b) then return end end
+    local low = msg:lower()
+    
+    -- Контекст: добавляем в историю
+    table.insert(ChatHistory, low)
+    if #ChatHistory > 5 then table.remove(ChatHistory, 1) end
 
-    if Memory[msg] then
-        local r = Memory[msg][math.random(1, #Memory[msg])]
-        if global then 
-            game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(r, "All")
-        else 
-            addLog("AI: " .. r, Color3.new(0, 1, 0.5)) 
-        end
-    else
-        -- Попытка Web-поиска
-        if WebSearchEnabled then
-            addLog("AI: Ищу в сети...", Color3.new(1, 1, 0))
-            local webResult = askWeb(msg)
-            if webResult then
-                local shortResult = webResult:sub(1, 150) .. "..."
-                Memory[msg] = {shortResult}
-                save()
-                updateIQ()
-                addLog("AI (Web): " .. shortResult, Color3.new(0.3, 0.8, 1))
-                return
-            end
-        end
-
-        -- Обычное обучение
-        if lastInput ~= "" then
-            if not Memory[lastInput] then Memory[lastInput] = {} end
-            table.insert(Memory[lastInput], msg)
-            save()
-            updateIQ()
-            addLog("[Выучено соответствие]", Color3.new(1, 0.5, 0))
-        end
+    -- 1. Поиск в памяти
+    if Memory[low] then
+        local r = Memory[low][math.random(1, #Memory[low])]
+        if global then game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(r, "All")
+        else addLog("AI: " .. r, Color3.new(0, 1, 0.5)) end
+        return
     end
-    lastInput = msg
+
+    -- 2. Веб-поиск
+    local web = askWeb(msg)
+    if web then
+        Memory[low] = {web}
+        save()
+        addLog("AI (Знания): " .. web:sub(1, 100) .. "...", Color3.new(0.4, 0.8, 1))
+        return
+    end
+
+    -- 3. Обучение
+    if #ChatHistory >= 2 then
+        local question = ChatHistory[#ChatHistory-1]
+        if not Memory[question] then Memory[question] = {} end
+        table.insert(Memory[question], msg)
+        save()
+        addLog("[Связь создана: " .. question .. " -> " .. msg .. "]", Color3.new(1, 1, 0))
+    end
 end
 
 Input.FocusLost:Connect(function(e)
@@ -146,16 +146,12 @@ Input.FocusLost:Connect(function(e)
     end
 end)
 
-WebToggle.MouseButton1Click:Connect(function()
-    WebSearchEnabled = not WebSearchEnabled
-    WebToggle.Text = "Web-Search: " .. (WebSearchEnabled and "ВКЛ" or "ВЫКЛ")
-    WebToggle.BackgroundColor3 = WebSearchEnabled and Color3.fromRGB(0, 80, 150) or Color3.fromRGB(60, 60, 70)
-end)
-
-ChatToggle.MouseButton1Click:Connect(function()
+Toggle.MouseButton1Click:Connect(function()
     AutoChat = not AutoChat
-    ChatToggle.Text = "Глобальный чат: " .. (AutoChat and "ВКЛ" or "ВЫКЛ")
-    ChatToggle.BackgroundColor3 = AutoChat and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(60, 60, 70)
+    Toggle.Text = "Глобальный чат: " .. (AutoChat and "ВКЛ" or "ВЫКЛ")
+    Toggle.BackgroundColor3 = AutoChat and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(60, 60, 70)
 end)
 
-updateIQ()
+game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.OnMessageDoneFiltering.OnClientEvent:Connect(function(d)
+    if AutoChat and d.FromSpeaker ~= game.Players.LocalPlayer.Name then process(d.Message, true) end
+end)
