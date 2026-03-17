@@ -27,6 +27,9 @@ Eclipse.Config = {
     MaxMessages = 50,
     LearningRate = 0.8, -- Скорость обучения (0-1)
     MinConfidence = 0.3, -- Минимальная уверенность для ответа
+    SaveInterval = 30, -- Автосохранение каждые 30 секунд
+    MaxKnowledgeSize = 10000, -- Максимум записей в базе знаний
+    PersistentMemory = true, -- Постоянная память
     Theme = {
         Primary = Color3.fromRGB(138, 43, 226), -- Purple
         Secondary = Color3.fromRGB(75, 0, 130),
@@ -57,6 +60,13 @@ Eclipse.CurrentContext = {
     lastTopic = nil,
     conversationDepth = 0,
     analyzedObjects = {}
+}
+
+-- Persistent Storage
+Eclipse.Storage = {
+    SaveKey = "EclipseAI_Knowledge_v1",
+    LastSave = 0,
+    AutoSaveEnabled = true
 }
 
 -- UI Creation Functions
@@ -297,7 +307,22 @@ function Eclipse:CreateChatInterface()
     end)
     
     -- Welcome message
-    self:AddSystemMessage("Привет! Я Eclipse AI с системой быстрого обучения. Я учусь с каждым твоим сообщением и запоминаю все о текущей игре. Задай мне вопрос или научи меня чему-то новому!")
+    local welcomeMsg = "Привет! Я Eclipse AI с системой быстрого обучения и постоянной памятью. "
+    
+    -- Проверяем, есть ли сохраненные знания
+    local hasKnowledge = false
+    for _ in pairs(self.Knowledge.patterns) do
+        hasKnowledge = true
+        break
+    end
+    
+    if hasKnowledge then
+        welcomeMsg = welcomeMsg .. "Я загрузил свои знания и помню наши прошлые разговоры! "
+    end
+    
+    welcomeMsg = welcomeMsg .. "Я учусь с каждым твоим сообщением и автоматически сохраняю все знания. Задай мне вопрос или научи меня чему-то новому!"
+    
+    self:AddSystemMessage(welcomeMsg)
 end
 
 function Eclipse:CreateToggleButton()
@@ -650,8 +675,14 @@ function Eclipse:LearnPattern(input, category)
     table.insert(self.Knowledge.patterns[category], {
         input = input,
         timestamp = os.time(),
-        confidence = 1.0
+        confidence = 1.0,
+        priority = category == "user_taught" and 10 or 1 -- Высокий приоритет для обучения от пользователя
     })
+    
+    -- Автосохранение после обучения
+    if #self.Knowledge.patterns[category] % 5 == 0 then
+        self:SaveKnowledge()
+    end
 end
 
 function Eclipse:LearnGameConcept(concept, details)
@@ -659,15 +690,24 @@ function Eclipse:LearnGameConcept(concept, details)
         self.Knowledge.gameData[concept] = {
             mentions = 0,
             details = {},
-            lastUpdated = os.time()
+            lastUpdated = os.time(),
+            importance = 1 -- Важность концепции
         }
     end
     
     self.Knowledge.gameData[concept].mentions = self.Knowledge.gameData[concept].mentions + 1
+    self.Knowledge.gameData[concept].lastUpdated = os.time()
+    self.Knowledge.gameData[concept].importance = math.min(self.Knowledge.gameData[concept].mentions / 5, 10)
+    
     table.insert(self.Knowledge.gameData[concept].details, {
         text = details,
         timestamp = os.time()
     })
+    
+    -- Ограничиваем количество деталей
+    if #self.Knowledge.gameData[concept].details > 20 then
+        table.remove(self.Knowledge.gameData[concept].details, 1)
+    end
 end
 
 function Eclipse:CheckLearnedPatterns(message)
@@ -852,10 +892,13 @@ function Eclipse:LearnRemote(remoteData)
             path = remoteData.path,
             parent = remoteData.parent,
             usageCount = 0,
-            discovered = os.time()
+            discovered = os.time(),
+            importance = 1,
+            notes = {} -- Заметки пользователя
         }
     end
     self.Knowledge.remotes[remoteData.name].usageCount = self.Knowledge.remotes[remoteData.name].usageCount + 1
+    self.Knowledge.remotes[remoteData.name].importance = math.min(self.Knowledge.remotes[remoteData.name].usageCount / 3, 10)
 end
 
 function Eclipse:GetGameStructure()
@@ -929,10 +972,13 @@ function Eclipse:LearnFunction(funcName, funcType)
             type = funcType,
             callCount = 0,
             discovered = os.time(),
-            context = {}
+            context = {},
+            importance = 1,
+            description = "" -- Описание от пользователя
         }
     end
     self.Knowledge.functions[funcName].callCount = self.Knowledge.functions[funcName].callCount + 1
+    self.Knowledge.functions[funcName].importance = math.min(self.Knowledge.functions[funcName].callCount / 2, 10)
 end
 
 -- Smart Response Generation with Learning
@@ -958,6 +1004,146 @@ function Eclipse:RecognizePattern(message)
     }
     
     return patterns
+end
+
+-- Persistent Storage System
+function Eclipse:SaveKnowledge()
+    if not self.Config.PersistentMemory then
+        return false
+    end
+    
+    local success, err = pcall(function()
+        local saveData = {
+            version = self.Version,
+            timestamp = os.time(),
+            knowledge = self.Knowledge,
+            context = self.CurrentContext,
+            stats = {
+                totalPatterns = 0,
+                totalRemotes = 0,
+                totalFunctions = 0
+            }
+        }
+        
+        for _ in pairs(self.Knowledge.patterns) do
+            saveData.stats.totalPatterns = saveData.stats.totalPatterns + 1
+        end
+        for _ in pairs(self.Knowledge.remotes) do
+            saveData.stats.totalRemotes = saveData.stats.totalRemotes + 1
+        end
+        for _ in pairs(self.Knowledge.functions) do
+            saveData.stats.totalFunctions = saveData.stats.totalFunctions + 1
+        end
+        
+        local jsonData = HttpService:JSONEncode(saveData)
+        
+        if writefile then
+            writefile(self.Storage.SaveKey .. ".json", jsonData)
+            self.Storage.LastSave = os.time()
+            
+            -- Показываем индикатор сохранения
+            if self.LearningIndicator then
+                self.LearningIndicator.Text = "💾 Saved"
+                self.LearningIndicator.BackgroundColor3 = self.Config.Theme.Success
+                self.LearningIndicator.Visible = true
+                
+                task.delay(2, function()
+                    if self.LearningIndicator then
+                        self.LearningIndicator.Visible = false
+                    end
+                end)
+            end
+            
+            return true
+        end
+        
+        return false
+    end)
+    
+    if success then
+        print("✅ Eclipse AI: Знания сохранены")
+        return true
+    else
+        return false
+    end
+end
+
+function Eclipse:LoadKnowledge()
+    if not self.Config.PersistentMemory then
+        return false
+    end
+    
+    local success, result = pcall(function()
+        if readfile and isfile and isfile(self.Storage.SaveKey .. ".json") then
+            local jsonData = readfile(self.Storage.SaveKey .. ".json")
+            local saveData = HttpService:JSONDecode(jsonData)
+            
+            if saveData.version == self.Version then
+                self.Knowledge = saveData.knowledge or self.Knowledge
+                self.CurrentContext = saveData.context or self.CurrentContext
+                
+                print("✅ Eclipse AI: Знания загружены!")
+                print("📊 Паттернов: " .. (saveData.stats.totalPatterns or 0))
+                print("📊 RemoteEvents: " .. (saveData.stats.totalRemotes or 0))
+                print("📊 Функций: " .. (saveData.stats.totalFunctions or 0))
+                
+                return true
+            end
+        end
+        
+        return false
+    end)
+    
+    if success and result then
+        return true
+    else
+        print("ℹ️ Eclipse AI: Начинаю с чистого листа")
+        return false
+    end
+end
+
+function Eclipse:AutoSave()
+    if not self.Storage.AutoSaveEnabled then
+        return
+    end
+    
+    task.spawn(function()
+        while self.Storage.AutoSaveEnabled do
+            task.wait(self.Config.SaveInterval)
+            
+            local hasData = false
+            for _ in pairs(self.Knowledge.patterns) do
+                hasData = true
+                break
+            end
+            
+            if hasData then
+                self:SaveKnowledge()
+            end
+        end
+    end)
+end
+
+function Eclipse:ExportKnowledge()
+    local export = "# Eclipse AI Knowledge Export\n"
+    export = export .. "Generated: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n\n"
+    
+    export = export .. "## Learned Patterns\n"
+    for keyword, data in pairs(self.Knowledge.patterns) do
+        export = export .. "- " .. keyword .. ": " .. data.count .. " mentions\n"
+    end
+    
+    export = export .. "\n## Remote Events\n"
+    for name, data in pairs(self.Knowledge.remotes) do
+        export = export .. "- " .. name .. " (" .. data.type .. "): " .. data.usageCount .. " uses\n"
+    end
+    
+    export = export .. "\n## Functions\n"
+    for name, data in pairs(self.Knowledge.functions) do
+        export = export .. "- " .. name .. " (" .. data.type .. "): " .. data.callCount .. " calls\n"
+    end
+    
+    return export
 end
 
 -- Commands
@@ -1037,7 +1223,70 @@ Eclipse.Commands = {
             conversationDepth = 0,
             analyzedObjects = {}
         }
+        
+        -- Удаляем сохранение
+        if writefile and isfile and isfile(self.Storage.SaveKey .. ".json") then
+            pcall(function()
+                delfile(self.Storage.SaveKey .. ".json")
+            end)
+        end
+        
         self:AddSystemMessage("🔄 База знаний сброшена. Начинаю обучение заново!")
+    end,
+    
+    ["/save"] = function(self)
+        local success = self:SaveKnowledge()
+        if success then
+            self:AddSystemMessage("💾 Знания успешно сохранены!")
+        else
+            self:AddSystemMessage("⚠️ Не удалось сохранить знания. Возможно, executor не поддерживает writefile.")
+        end
+    end,
+    
+    ["/export"] = function(self)
+        local export = self:ExportKnowledge()
+        
+        if writefile then
+            local filename = "EclipseAI_Export_" .. os.time() .. ".txt"
+            writefile(filename, export)
+            self:AddSystemMessage("📤 Знания экспортированы в файл: " .. filename)
+        else
+            self:AddSystemMessage("📋 Экспорт:\n" .. export:sub(1, 500) .. "\n... (слишком длинно для чата)")
+        end
+    end,
+    
+    ["/stats"] = function(self)
+        local stats = {
+            patterns = 0,
+            remotes = 0,
+            functions = 0,
+            concepts = 0
+        }
+        
+        for _ in pairs(self.Knowledge.patterns) do stats.patterns = stats.patterns + 1 end
+        for _ in pairs(self.Knowledge.remotes) do stats.remotes = stats.remotes + 1 end
+        for _ in pairs(self.Knowledge.functions) do stats.functions = stats.functions + 1 end
+        for _ in pairs(self.Knowledge.gameData) do stats.concepts = stats.concepts + 1 end
+        
+        local lastSave = self.Storage.LastSave > 0 and os.date("%H:%M:%S", self.Storage.LastSave) or "Никогда"
+        
+        local response = string.format([[📊 Статистика памяти:
+
+💭 Паттернов: %d
+🔌 RemoteEvents: %d
+⚙️ Функций: %d
+📚 Концепций: %d
+💾 Последнее сохранение: %s
+🔄 Автосохранение: %s
+
+Всего записей: %d]], 
+            stats.patterns, stats.remotes, stats.functions, stats.concepts,
+            lastSave,
+            self.Storage.AutoSaveEnabled and "Включено" or "Выключено",
+            stats.patterns + stats.remotes + stats.functions + stats.concepts
+        )
+        
+        self:AddMessage("Eclipse", response, false)
     end,
     
     ["/help"] = function(self)
@@ -1047,6 +1296,9 @@ Eclipse.Commands = {
 /structure - Структура игры
 /learn - Показать базу знаний
 /teach - Режим обучения
+/stats - Статистика памяти
+/save - Сохранить знания
+/export - Экспорт знаний в файл
 /reset - Сбросить знания
 /clear - Очистить чат
 /help - Список команд]]
@@ -1079,10 +1331,23 @@ end
 -- Initialize
 function Eclipse:Init()
     print("🌙 Eclipse AI v" .. self.Version .. " загружается...")
+    
+    -- Загружаем сохраненные знания
+    self:LoadKnowledge()
+    
+    -- Создаем GUI
     self:CreateGui()
     self:ToggleGui()
+    
+    -- Запускаем автосохранение
+    self:AutoSave()
+    
     print("✅ Eclipse AI готов к работе!")
     print("💡 Нажми на кнопку с луной, чтобы открыть интерфейс")
+    
+    if self.Config.PersistentMemory then
+        print("💾 Постоянная память включена - все знания сохраняются автоматически")
+    end
 end
 
 -- Auto-start
